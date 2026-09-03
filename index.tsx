@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { NavContextMenuPatchCallback } from "@api/ContextMenu";
 import { Paragraph } from "@components/Paragraph";
 import { Logger } from "@utils/Logger";
 import definePlugin, { PluginNative } from "@utils/types";
@@ -39,6 +40,39 @@ function getRenderedSrc(target: EventTarget | null): string | undefined {
     if (!(media instanceof HTMLImageElement || media instanceof HTMLVideoElement)) return;
     return media.currentSrc || media.src || undefined;
 }
+
+// The "gif-picker" nav-menu patch receives the item props but not the mouse
+// event, so capture the rendered media source when the right-click lands.
+let renderedSrcCapture: string | undefined;
+let captureTime = 0;
+
+function onContextMenuCapture(event: Event) {
+    renderedSrcCapture = getRenderedSrc(event.target);
+    captureTime = Date.now();
+}
+
+const gifPickerContextMenuPatch: NavContextMenuPatchCallback = (children, props) => {
+    const renderedSrc = Date.now() - captureTime < 2000 ? renderedSrcCapture : undefined;
+    const candidates = getPickerCandidateUrls(props, renderedSrc);
+    if (candidates.length === 0) return;
+
+    children.push(
+        <Menu.MenuItem id="gif-recovery" key="gif-recovery" label="Recover GIF">
+            <Menu.MenuItem
+                id="gif-recovery-download"
+                key="gif-recovery-download"
+                label="Download recovered file"
+                action={() => void recover(candidates, "download")}
+            />
+            <Menu.MenuItem
+                id="gif-recovery-attach"
+                key="gif-recovery-attach"
+                label="Attach to current channel"
+                action={() => void recover(candidates, "attach")}
+            />
+        </Menu.MenuItem>
+    );
+};
 
 async function readBody(response: Response): Promise<Uint8Array | null> {
     const declaredLength = Number(response.headers.get("content-length"));
@@ -168,26 +202,13 @@ export default definePlugin({
     authors: [{ name: "Sodroz", id: 145188106289545216n }],
     tags: ["Utility"],
     settingsAboutComponent: SettingsAbout,
-    gifPickerContextMenu(instance, event) {
-        const item: unknown = instance?.props?.item;
-        const candidates = getPickerCandidateUrls(item, getRenderedSrc(event.target));
-        if (candidates.length === 0) return null;
-
-        return (
-            <Menu.MenuItem id="gif-recovery" key="gif-recovery" label="Recover GIF">
-                <Menu.MenuItem
-                    id="gif-recovery-download"
-                    key="gif-recovery-download"
-                    label="Download recovered file"
-                    action={() => void recover(candidates, "download")}
-                />
-                <Menu.MenuItem
-                    id="gif-recovery-attach"
-                    key="gif-recovery-attach"
-                    label="Attach to current channel"
-                    action={() => void recover(candidates, "attach")}
-                />
-            </Menu.MenuItem>
-        );
+    contextMenus: {
+        "gif-picker": gifPickerContextMenuPatch
+    },
+    start() {
+        document.addEventListener("contextmenu", onContextMenuCapture, true);
+    },
+    stop() {
+        document.removeEventListener("contextmenu", onContextMenuCapture, true);
     }
 });
